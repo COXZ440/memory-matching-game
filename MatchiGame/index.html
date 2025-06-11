@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Memory Matching Game</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 0;
+    }
+    h1 { margin: 20px 0 10px; color: #333; }
+    .controls { margin-bottom: 10px; }
+    #timer, #score, #playerInfo { font-size: 16px; font-weight: bold; margin: 0 10px; }
+    select, button { padding: 6px 12px; font-size: 14px; margin: 0 5px; }
+    .game-board {
+      display: grid;
+      justify-content: center;
+      gap: 10px;
+      margin: 20px auto;
+    }
+    .card {
+      width: 100px;
+      height: 100px;
+      perspective: 1000px;
+      cursor: pointer;
+    }
+    .card-inner {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      transition: transform 0.6s;
+      transform-style: preserve-3d;
+    }
+    .card.flipped .card-inner { transform: rotateY(180deg); }
+    .card-front, .card-back {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      backface-visibility: hidden;
+      border-radius: 8px;
+    }
+    .card-front { transform: rotateY(180deg); }
+    .card img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 8px;
+    }
+    .card.matched { pointer-events: none; opacity: 0.5; }
+    canvas {
+      position: fixed;
+      pointer-events: none;
+      top: 0;
+      left: 0;
+      z-index: 1000;
+    }
+    #leaderboard {
+      margin: 24px auto 0;
+      max-width: 520px;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+      padding: 18px;
+      text-align: left;
+    }
+    #leaderboard h2 { margin: 0 0 10px; }
+    #leaderboard table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 16px;
+    }
+    #leaderboard th, #leaderboard td {
+      padding: 5px 8px;
+      text-align: left;
+    }
+    #leaderboard th { background: #007bff; color: #fff; }
+    #leaderboard tr:nth-child(even) { background: #f6f6f6; }
+    #leaderboard tr:nth-child(odd) { background: #eaf2fb; }
+    #resetLeaderboardBtn {
+      background: #dc3545;
+      color: white;
+      font-weight: bold;
+      border: none;
+      border-radius: 7px;
+      padding: 8px 16px;
+      margin-bottom: 12px;
+      cursor: pointer;
+    }
+    /* User Modal */
+    #userModal {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+    #userModalContent {
+      background: #fff;
+      padding: 30px 40px;
+      border-radius: 14px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+      text-align: left;
+    }
+    #userModal label {
+      font-weight: bold;
+      display: block;
+      margin-top: 16px;
+    }
+    #userModal input[type="text"] {
+      width: 100%;
+      padding: 8px;
+      margin-top: 4px;
+      border-radius: 6px;
+      border: 1px solid #aaa;
+      font-size: 15px;
+    }
+    #userModal button {
+      margin-top: 20px;
+      width: 100%;
+      padding: 10px;
+      font-size: 16px;
+      border-radius: 7px;
+      border: none;
+      background: #007bff;
+      color: #fff;
+      cursor: pointer;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>Memory Matching Game</h1>
+
+  <!-- User info modal -->
+  <div id="userModal">
+    <div id="userModalContent">
+      <h2>Enter Your Info</h2>
+      <form id="userForm">
+        <label for="playerName">Name:</label>
+        <input type="text" id="playerName" required autocomplete="off"/>
+        <label for="playerID">ID:</label>
+        <input type="text" id="playerID" required autocomplete="off"/>
+        <button type="submit">Start Game</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="controls">
+    <span id="playerInfo"></span>
+    <span id="timer">⏱ Time: 0s</span>
+    <span id="score">🧠 Score: 0</span>
+    <button onclick="restartGame()">🔁 Restart</button>
+  </div>
+
+  <div class="game-board" id="gameBoard"></div>
+  <audio id="flipSound" src="sounds/flip.mp3" preload="auto"></audio>
+  <canvas id="confettiCanvas"></canvas>
+
+  <!-- Leaderboard -->
+  <div id="leaderboard">
+    <button id="resetLeaderboardBtn">🗑️ Reset Leaderboard</button>
+    <!-- Leaderboard table will render here -->
+  </div>
+
+  <script>
+    const allImages = [
+      'images/den10.png',
+      'images/den5.png',
+      'images/den7.png',
+      'images/den4.png',
+      'images/den.png',
+      'images/den9.png',
+      'images/den3.png',
+      'images/den1.png',
+      'images/den8.png',
+      'images/den11.png',
+      'images/den6.png',
+      'images/den2.png'
+    ];
+    const backImage = 'images/back.png';
+
+    // User info storage
+    let playerName = "", playerID = "";
+
+    // Level configs
+    const levels = [
+      { name: "easy", cols: 4, rows: 2, pairs: 4 },
+      { name: "medium", cols: 4, rows: 4, pairs: 8 },
+      { name: "hard", cols: 6, rows: 4, pairs: 12 }
+    ];
+    let currentLevelIndex = 0;
+    let timerInterval, secondsElapsed = 0, score = 0, matchedCards = 0, flippedCards = [], cards = [];
+
+    const gameBoard = document.getElementById("gameBoard");
+    const timerDisplay = document.getElementById("timer");
+    const scoreDisplay = document.getElementById("score");
+    const flipSound = document.getElementById("flipSound");
+    const confettiCanvas = document.getElementById("confettiCanvas");
+    const playerInfoDisplay = document.getElementById("playerInfo");
+    const userModal = document.getElementById("userModal");
+    const userForm = document.getElementById("userForm");
+    const playerNameInput = document.getElementById("playerName");
+    const playerIDInput = document.getElementById("playerID");
+    const leaderboardDiv = document.getElementById("leaderboard");
+    const resetBtn = document.getElementById("resetLeaderboardBtn");
+
+    // User info modal logic
+    userForm.onsubmit = function(e) {
+      e.preventDefault();
+      playerName = playerNameInput.value.trim();
+      playerID = playerIDInput.value.trim();
+      if(!playerName || !playerID) return;
+      userModal.style.display = "none";
+      showPlayerInfo();
+      checkAdmin();
+      restartGame();
+    };
+
+    function showPlayerInfo() {
+      playerInfoDisplay.textContent = `👤 Name: ${playerName} | 🆔: ${playerID}`;
+    }
+
+    function restartGame() {
+      clearInterval(timerInterval);
+      currentLevelIndex = 0;
+      secondsElapsed = 0;
+      score = 0;
+      scoreDisplay.textContent = `🧠 Score: 0`;
+      timerDisplay.textContent = `⏱ Time: 0s`;
+      showPlayerInfo();
+      initGame();
+      startTimer();
+    }
+
+    function startTimer() {
+      timerDisplay.textContent = `⏱ Time: ${secondsElapsed}s`;
+      timerInterval = setInterval(() => {
+        secondsElapsed++;
+        timerDisplay.textContent = `⏱ Time: ${secondsElapsed}s`;
+      }, 1000);
+    }
+
+    function initGame() {
+      const { name, cols, rows, pairs } = levels[currentLevelIndex];
+      gameBoard.style.gridTemplateColumns = `repeat(${cols}, 100px)`;
+      cards = [...allImages.slice(0, pairs), ...allImages.slice(0, pairs)];
+      cards.sort(() => Math.random() - 0.5);
+      flippedCards = [];
+      matchedCards = 0;
+      gameBoard.innerHTML = '';
+
+      cards.forEach((image, index) => {
+        const card = document.createElement('div');
+        card.classList.add('card');
+        card.dataset.image = image;
+
+        const cardInner = document.createElement('div');
+        cardInner.classList.add('card-inner');
+
+        const front = document.createElement('div');
+        front.classList.add('card-front');
+        const frontImg = document.createElement('img');
+        frontImg.src = image;
+        front.appendChild(frontImg);
+
+        const back = document.createElement('div');
+        back.classList.add('card-back');
+        const backImg = document.createElement('img');
+        backImg.src = backImage;
+        back.appendChild(backImg);
+
+        cardInner.appendChild(front);
+        cardInner.appendChild(back);
+        card.appendChild(cardInner);
+
+        card.addEventListener('click', flipCard);
+        gameBoard.appendChild(card);
+      });
+    }
+
+    function flipCard() {
+      if (this.classList.contains('flipped') || this.classList.contains('matched')) return;
+      if (flippedCards.length >= 2) return;
+
+      this.classList.add('flipped');
+      flipSound.currentTime = 0;
+      flipSound.play();
+      flippedCards.push(this);
+
+      if (flippedCards.length === 2) {
+        checkMatch();
+      }
+    }
+
+    function checkMatch() {
+      const [card1, card2] = flippedCards;
+
+      if (card1.dataset.image === card2.dataset.image) {
+        card1.classList.add('matched');
+        card2.classList.add('matched');
+        matchedCards += 2;
+        score++;
+        scoreDisplay.textContent = `🧠 Score: ${score}`;
+        if (matchedCards === cards.length) {
+          setTimeout(() => {
+            launchConfetti();
+            if (currentLevelIndex < levels.length - 1) {
+              alert(`🎉 ${playerName} (${playerID}) finished ${levels[currentLevelIndex].name.toUpperCase()}! Next level...`);
+              currentLevelIndex++;
+              initGame();
+            } else {
+              clearInterval(timerInterval);
+              setTimeout(() => {
+                alert(`🏆 Congratulations, ${playerName} (${playerID})! All levels complete in ${secondsElapsed}s with a score of ${score}!`);
+                saveToLeaderboard({
+                  playerName,
+                  playerID,
+                  time: secondsElapsed,
+                  score
+                });
+                renderLeaderboard();
+              }, 500);
+            }
+          }, 500);
+        }
+      } else {
+        setTimeout(() => {
+          card1.classList.remove('flipped');
+          card2.classList.remove('flipped');
+        }, 1000);
+      }
+
+      flippedCards = [];
+    }
+
+    function launchConfetti() {
+      const ctx = confettiCanvas.getContext("2d");
+      confettiCanvas.width = window.innerWidth;
+      confettiCanvas.height = window.innerHeight;
+      const pieces = [];
+      for (let i = 0; i < 150; i++) {
+        pieces.push({
+          x: Math.random() * confettiCanvas.width,
+          y: Math.random() * confettiCanvas.height - confettiCanvas.height,
+          r: Math.random() * 6 + 4,
+          d: Math.random() * 30 + 10,
+          color: `hsl(${Math.random() * 360}, 100%, 50%)`,
+          tilt: Math.random() * 10 - 10,
+          tiltAngle: 0,
+          tiltAngleIncrement: Math.random() * 0.07 + 0.05
+        });
+      }
+
+      function drawConfetti() {
+        ctx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+        pieces.forEach(p => {
+          ctx.beginPath();
+          ctx.lineWidth = p.r;
+          ctx.strokeStyle = p.color;
+          ctx.moveTo(p.x + p.tilt + p.r / 2, p.y);
+          ctx.lineTo(p.x + p.tilt, p.y + p.tilt + p.d / 2);
+          ctx.stroke();
+        });
+        updateConfetti();
+      }
+
+      function updateConfetti() {
+        pieces.forEach(p => {
+          p.tiltAngle += p.tiltAngleIncrement;
+          p.y += (Math.cos(p.d) + 3 + p.r / 2) / 2;
+          p.tilt = Math.sin(p.tiltAngle - p.x / 3);
+          if (p.y > confettiCanvas.height) {
+            p.y = -10;
+            p.x = Math.random() * confettiCanvas.width;
+          }
+        });
+      }
+
+      let confettiAnimation = setInterval(drawConfetti, 20);
+      setTimeout(() => {
+        clearInterval(confettiAnimation);
+        ctx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+      }, 2000);
+    }
+
+    // Leaderboard functions
+    function getLeaderboard() {
+      return JSON.parse(localStorage.getItem('memory_leaderboard') || '[]');
+    }
+
+    function saveToLeaderboard(result) {
+      let board = getLeaderboard();
+      // Remove previous entry for same playerID (if you want only best score per ID)
+      board = board.filter(r => !(r.playerID === result.playerID));
+      board.push(result);
+      // Sort by time ascending (fastest first)
+      board.sort((a, b) => a.time - b.time);
+      // Keep only top 10
+      board = board.slice(0, 10);
+      localStorage.setItem('memory_leaderboard', JSON.stringify(board));
+    }
+
+    function renderLeaderboard() {
+      const board = getLeaderboard();
+      let html = `<button id="resetLeaderboardBtn">🗑️ Reset Leaderboard</button>`;
+      if (board.length === 0) {
+        html += "<h2>Leaderboard (Top 10)</h2><p>No entries yet!</p>";
+        leaderboardDiv.innerHTML = html;
+        setResetBtnListener();
+        return;
+      }
+      html += `<h2>Leaderboard (Top 10)</h2><table><tr><th>#</th><th>Name</th><th>ID</th><th>Time (s)</th><th>Score</th></tr>`;
+      board.forEach((entry, i) => {
+        html += `<tr>
+          <td>${i+1}</td>
+          <td>${entry.playerName}</td>
+          <td>${entry.playerID}</td>
+          <td>${entry.time}</td>
+          <td>${entry.score}</td>
+        </tr>`;
+      });
+      html += `</table>`;
+      leaderboardDiv.innerHTML = html;
+      setResetBtnListener();
+    }
+
+    function setResetBtnListener() {
+      const btn = document.getElementById('resetLeaderboardBtn');
+      if (btn) {
+        btn.onclick = function() {
+          if (playerID === 'admin') {
+            if (confirm('Are you sure you want to reset the leaderboard? This cannot be undone.')) {
+              localStorage.removeItem('memory_leaderboard');
+              renderLeaderboard();
+              alert('Leaderboard has been reset.');
+            }
+          } else {
+            alert('Only admin can reset the leaderboard. Please login as admin.');
+          }
+        };
+      }
+    }
+
+    // (Optional) Hide reset button for non-admins visually on page load
+    function checkAdmin() {
+      setTimeout(() => {
+        const btn = document.getElementById('resetLeaderboardBtn');
+        if (btn) {
+          btn.style.display = (playerID === 'admin') ? '' : 'none';
+        }
+      }, 200);
+    }
+
+    // On load, show user modal instead of starting game
+    window.onload = () => {
+      userModal.style.display = "flex";
+      playerNameInput.value = "";
+      playerIDInput.value = "";
+      renderLeaderboard();
+      checkAdmin();
+    };
+  </script>
+</body>
+</html>
